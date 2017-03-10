@@ -1,157 +1,160 @@
-console.log(d3);
-
 //Set up a drawing environment
-var m = {t:100,r:50,b:100,l:50},
-	w = document.getElementById('plot').clientWidth - m.l - m.r,
-	h = 2500 - m.t - m.b;
-var plot = d3.select(document.getElementById('plot'))
-	.append('svg')
-	.attr('width', w + m.l + m.r)
-	.attr('height', h + m.t + m.b)
-	.append('g')
-	.attr('class','canvas')
-	.attr('transform','translate('+m.l+','+m.t+')');
+var m = {t:50,r:50,b:50,l:50},
+		w = document.getElementById('plot1').clientWidth - m.l - m.r,
+		h = document.getElementById('plot1').clientHeight - m.t - m.b;
+
+var plot = d3.select('.plot')
+    .append('svg')
+    .attr('width', w + m.l + m.r)
+    .attr('height', h + m.t + m.b)
+    .append('g').attr('class','canvas')
+    .attr('transform','translate('+ m.l+','+ m.t+')');
 
 //Scales etc.
-var scaleSize = d3.scaleSqrt().range([0,60]);
+var scaleColor = d3.scaleOrdinal().range(d3.schemeCategory20);
+//scales for the bump chart
+var x = d3.scalePoint().range([0,w],.5),
+		y = {};
+
+//line generator
+var line = d3.line(),
+		axis = d3.axisLeft(),
+		background,
+		foreground;
 
 //import data
 d3.queue()
-	.defer(d3.csv,'./data/hubway_trips_reduced.csv',parseTrips)
-	.defer(d3.csv,'./data/hubway_stations.csv',parseStations)
+	.defer(d3.csv,'./data/SchoolData_050717.csv',parseData)
 	.await(dataLoaded);
 
-function dataLoaded(err,trips,stations){
+	function dataLoaded(err, data){
+		var cf = crossfilter(data);
+		var schoolsByType = cf.dimension(function(d){return d.type});
+		var allSchools = schoolsByType.filter(null).top(Infinity);
+		var Neighborhood = schoolsByType.filter('Neighborhood').top(Infinity);
+		var schoolsByRating = cf.dimension(function(d){return d.rating});
+		var schoolsByProbation = cf.dimension(function(d){return d.probation_status});
 
-	//convert stations into a map object
-	var stationsMap = d3.map(stations,function(d){return d.id});
-	console.log(stationsMap);
-	console.log(stationsMap.keys());
-	console.log(stationsMap.values());
-	console.log(stationsMap.entries());
+		//console.log(Neighborhood);
 
-	//How many trips started from each station?
-	var tripsByStart = d3.nest()
-		.key(function(d){return d.startStn})
-		.rollup(function(trips){return trips.length})
-		.entries(trips);
+		//extract the list of dimensions and create a scale for each
+		x.domain(dimensions = d3.keys(data[0]).filter(function(d){
+			return d != 'name' && (y[d] = d3.scaleLinear()
+							.domain(d3.extent(data,function(p){ return +p[d]; }))
+							.range([h,0]));
+		}));
 
-	//How many trips ended at each stations?
-	var tripsByEnd = d3.nest()
-		.key(function(d){return d.endStn})
-		.rollup(function(trips){return trips.length})
-		.entries(trips);
-
-	console.log(tripsByStart);
-	console.log(tripsByEnd);
-
-
-	tripsByStart.forEach(function(stn){
-		if(stationsMap.get(stn.key)){
-			stationsMap.get(stn.key).tripStarts = stn.value;
+		//function to return the path for a given data point
+		function path(d){
+			return line(dimensions.map(function(p){return [x(p),y[p](d[p])];}));
 		}
-	});
 
-	tripsByEnd.forEach(function(stn){
-		if(stationsMap.get(stn.key)){
-			stationsMap.get(stn.key).tripEnds = stn.value;
-		}
-	});
+		//add gray background lines for context
+		background = plot.append('g')
+				.attr('class','background')
+				.selectAll('path')
+				.data(data)
+				.enter().append('path')
+				.attr('d',path);
 
-	//Data discovery
-	//Highest number of trips from any stations?
-	var tripsMax = d3.max(stationsMap.values(), function(d){return Math.max(d.tripStarts, d.tripEnds)});
-	console.log(tripsMax);
+		//add blue foreground lines for focus
+		foreground = plot.append('g')
+				.attr('class','foreground')
+				.selectAll('path')
+				.data(data)
+				.enter().append('path')
+				.attr('d',path);
 
-	scaleSize.domain([0,tripsMax]);
+		//add a group element for each dimension
+		var g = plot.selectAll('.dimension')
+				.data(dimensions)
+				.enter().append('g')
+				.attr('class','dimension')
+				.attr('transform',function(d){return 'translate(' + x(d) + ')';});
 
-	draw(stationsMap.values());
-}
+		//add axis and title
+		g.append('g')
+				.attr('class','axis')
+				.each(function(d){d3.select(this).call(axis.scale(y[d]));})
+				.append('text')
+				.attr('text-anchor','middle')
+				.attr('y',-9)
+				.text(String);
 
-function draw(stations){
-	console.log('draw:start');
-	console.log(stations);
 
-	//Sort stations by trip volume
-	stations.sort(function(a,b){
-		return Math.max(b.tripStarts,b.tripEnds) - Math.max(a.tripStarts,a.tripEnds);
-	});
 
-	var nodes = plot.selectAll('.stn')
-		.data(stations,function(d){return d.id})
-		.enter()
-		.append('g').attr('class','stn');
+		//benchmark numbers **TO DO: Add in a median line**
+		var avgStudents = d3.mean(data,function(d) { return d.students}),
+				medianStudents = d3.median(data,function(d){return d.students}),
+				// avgRating = /*fill with correct info*/,
+				// avgProbationStatus = /*fill with correct info*/,
+				avgAsian = d3.mean(data,function(d) { return d.asian_pct}),
+				avgBlack = d3.mean(data,function(d) { return d.black_pct}),
+				avgHispanic = d3.mean(data,function(d) { return d.hispanic_pct}),
+				avgWhite = d3.mean(data,function(d) { return d.white_pct}),
+				avgOther = d3.mean(data,function(d) { return d.other_pct}),
+				avgLowIncome = d3.mean(data,function(d) { return d.low_income_pct}),
+				avgDiverseLearners = d3.mean(data,function(d) { return d.diverse_learners_pct}),
+				avgLimitedEnglish = d3.mean(data,function(d) { return d.limited_english_pct}),
+				avgMobilityRate = d3.mean(data,function(d) { return d.mobility_rate_pct}),
+				avgChronicTruancy = d3.mean(data,function(d) { return d.chronic_truancy_pct});
 
-	nodes.append('circle').attr('class','start')
-		.attr('r',function(d){return scaleSize(d.tripStarts)})
-		.datum(function(d){return d.tripStarts});
-	nodes.append('circle').attr('class','end')
-		.attr('r',function(d){return scaleSize(d.tripEnds)})
-		.datum(function(d){return d.tripEnds});
-	nodes.append('text').text(function(d){return d.name})
-		.attr('text-anchor','middle')
-		.attr('y',function(d){return scaleSize(Math.max(d.tripStarts,d.tripEnds)) + 20});
+		// console.log('Average students: ' + avgStudents);
+		// console.log('Median students: ' + medianStudents);
+		// console.log('Average chronic truancy: ' + avgChronicTruancy);
+		// console.log('Average asian: ' + avgAsian);
+		// console.log('Average black: ' + avgBlack);
 
-	//The next part is  to figure out where to position these nodes
-	//and for each node, make sure the smaller of the two circles is in front
-	var x = 0, y = 80, yPadding = 120, xPadding = 40;
+		/*//this is the pie chart
+		//pie chart data transformation
+    var nestedByType = d3.nest()
+        .key(function(d){return d.type})
+        .entries(data);
 
-	nodes.each(function(d){
-		var r = scaleSize(Math.max(d.tripStarts,d.tripEnds));
-		x += r;
+	  var arc = d3.arc()
+	      .startAngle(function(d){ return d.startAngle })
+	      .endAngle(function(d){ return d.endAngle })
+	      .innerRadius(10)
+	      .outerRadius(30);
 
-		d3.select(this)
-			.attr('transform','translate('+x+','+y+')')
-			//find the smaller of the two elements
-			.selectAll('circle')
-			.sort(function(a,b){
-				return b-a;
-			})
+    //pie layout   -->  data transformation
+    var pie = d3.pie()
+        .value(function(d){ return d.values.length });
 
-		x += (r + xPadding);
-		if(x + 60 > w){
-			x=0;
-			y+=yPadding;
-		}
-	});
+    //draw the slices
+    var slices = plot.selectAll('path')
+        .data(pie(nestedByType))
+        .enter()
+        .append('path')
+        .attr('d',arc)
+        .attr('transform','translate('+w/2+','+h/2+')')
+        .style('fill', function(d,i){return scaleColor(i);})*/
 
-}
-
-function parseTrips(d){
-	return {
-		bike_nr:d.bike_nr,
-		duration:+d.duration,
-		startStn:d.strt_statn,
-		startTime:parseTime(d.start_date),
-		endStn:d.end_statn,
-		endTime:parseTime(d.end_date),
-		userType:d.subsc_type,
-		userGender:d.gender?d.gender:undefined,
-		userBirthdate:d.birth_date?+d.birth_date:undefined
 	}
-}
 
-function parseStations(d){
+
+function parseData(d){
 	return {
-		id:d.id,
-		lngLat:[+d.lng,+d.lat],
-		city:d.municipal,
-		name:d.station,
-		status:d.status,
-		terminal:d.terminal
+		name:d.name,
+		//street_address:d.street_address,
+		//city:d.city,
+		//state:d.state,
+		//zip:d.zip,
+		//id:d.id?d.id:undefined,
+		//grades:d.grades,
+		//type:d.type,
+		students:+d.students,
+		//rating:d.rating,
+		//probation_status:d.probation_status,
+		asian_pct:+d.asian,
+		black_pct:+d.black,
+		hispanic_pct:+d.hispanic,
+		white_pct:+d.white,
+		other_pct:+d.other,
+		low_income_pct:+d.low_income,
+		diverse_learners_pct:+d.diverse_learners,
+		limited_english_pct:+d.limited_english,
+		mobility_rate_pct:+d.mobility_rate
+		//chronic_truancy_pct:+d.chronic_truancy
 	}
-}
-
-function parseTime(timeStr){
-	var time = timeStr.split(' ')[1].split(':'),
-		hour = +time[0],
-		min = +time[1],
-		sec = +time[2];
-
-	var	date = timeStr.split(' ')[0].split('/'),
-		year = date[2],
-		month = date[0],
-		day = date[1];
-
-	return new Date(year,month-1,day,hour,min,sec);
 }
